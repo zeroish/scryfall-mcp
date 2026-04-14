@@ -1,0 +1,13 @@
+[project]
+name = "scryfall-mcp"
+version = "0.1.0"
+description = "MCP server wrapping the Scryfall API for EDH/Commander use cases"
+requires-python = ">=3.11"
+dependencies = [
+    "fastmcp",
+    "httpx",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

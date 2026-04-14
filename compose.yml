@@ -1,0 +1,14 @@
+services:
+  scryfall-mcp:
+    build: .
+    image: scryfall-mcp
+
+  # Dev mode: runs fastmcp inspector with source mounted (no rebuild needed on changes)
+  dev:
+    build: .
+    image: scryfall-mcp
+    command: fastmcp dev scryfall_mcp.py
+    volumes:
+      - ./scryfall_mcp.py:/app/scryfall_mcp.py:ro
+    ports:
+      - "${INSPECTOR_PORT:-6274}:6274"
