@@ -12,3 +12,9 @@ compose.yml
 docker-compose.yml
 .github
 pyproject.toml
+tests/
+.pytest_cache
+.mypy_cache
+.ruff_cache
+dist/
+build/

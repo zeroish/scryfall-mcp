@@ -1,13 +1,21 @@
 services:
   scryfall-mcp:
-    build: .
-    image: scryfall-mcp
+    build:
+      context: .
+      args:
+        VERSION: "${APP_VERSION:-dev}"
+    image: "scryfall-mcp:${APP_VERSION:-latest}"
+    restart: unless-stopped
 
-  # Dev mode: runs fastmcp inspector with source mounted (no rebuild needed on changes)
+  # Dev mode: runs fastmcp inspector with source mounted (no rebuild needed on changes).
+  # NOTE: the volume mount is required — without it the baked image source runs instead.
   dev:
-    build: .
-    image: scryfall-mcp
-    command: fastmcp dev scryfall_mcp.py
+    build:
+      context: .
+      args:
+        VERSION: "${APP_VERSION:-dev}"
+    image: scryfall-mcp:dev
+    command: ["fastmcp", "dev", "scryfall_mcp.py"]
     volumes:
       - ./scryfall_mcp.py:/app/scryfall_mcp.py:ro
     ports:

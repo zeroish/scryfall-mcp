@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import signal
 import sys
 import time
 from contextlib import asynccontextmanager
@@ -67,4 +68,5 @@ async def scryfall_get(path: str, **params) -> dict:
 
 
 if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     mcp.run()
