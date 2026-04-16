@@ -1,1 +1,1 @@
-worker: python scryfall_mcp.py
+mcp: python scryfall_mcp.py

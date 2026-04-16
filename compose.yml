@@ -4,7 +4,7 @@ services:
       context: .
       args:
         VERSION: "${APP_VERSION:-dev}"
-    image: "scryfall-mcp:${APP_VERSION:-latest}"
+    image: "scryfall-mcp:${APP_VERSION:-dev}"
     restart: unless-stopped
 
   # Dev mode: runs fastmcp inspector with source mounted (no rebuild needed on changes).
@@ -19,4 +19,4 @@ services:
     volumes:
       - ./scryfall_mcp.py:/app/scryfall_mcp.py:ro
     ports:
-      - "${INSPECTOR_PORT:-6274}:6274"
+      - "${INSPECTOR_PORT:-6274}:${INSPECTOR_CONTAINER_PORT:-6274}"

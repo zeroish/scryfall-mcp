@@ -1,3 +1,3 @@
 # Abstract dependencies — pin to requirements.txt via: pip-compile requirements.in
-fastmcp
-httpx
+fastmcp>=3.2,<4
+httpx>=0.28,<1
