@@ -10,6 +10,8 @@ __pycache__
 *.md
 compose.yml
 docker-compose.yml
+Dockerfile.dev
+Makefile
 .github
 pyproject.toml
 tests/

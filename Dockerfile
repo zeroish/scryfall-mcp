@@ -22,7 +22,8 @@ LABEL org.opencontainers.image.description="Scryfall MCP server for EDH/Commande
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/deps
+    PYTHONPATH=/deps \
+    PATH="/deps/bin:$PATH"
 
 WORKDIR /app
 

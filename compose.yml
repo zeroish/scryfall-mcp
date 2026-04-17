@@ -40,15 +40,13 @@ services:
           memory: 256M
           cpus: "0.50"
 
-  # Dev mode: runs fastmcp inspector with source mounted (no rebuild needed on changes).
-  # NOTE: the volume mount is required — without it the baked image source runs instead.
+  # Dev mode: runs FastMCP Inspector (requires Node.js, so uses a separate image).
+  # Source is mounted — edit scryfall_mcp.py and the inspector reloads without rebuild.
   dev:
     build:
       context: .
-      args:
-        VERSION: "${APP_VERSION:-dev}"
-    image: scryfall-mcp:dev
-    command: ["fastmcp", "dev", "scryfall_mcp.py"]
+      dockerfile: Dockerfile.dev
+    image: scryfall-mcp-dev:latest
     volumes:
       - ./scryfall_mcp.py:/app/scryfall_mcp.py:ro
     ports:
