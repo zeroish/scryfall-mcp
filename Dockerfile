@@ -1,17 +1,4 @@
 # Pinned 2026-04-15 — Docker Hardened Image (zero CVE)
-# Stage 1: install deps into /deps so the runtime layer stays clean
-FROM dhi.io/python:3.12@sha256:35924be4174348d4a0bdcf3bfaba81079cbb1faa52821611c71a6f50b3006572 AS builder
-
-ENV PYTHONDONTWRITEBYTECODE=1
-WORKDIR /build
-USER 0
-COPY requirements.txt .
-RUN ["python3", "-m", "pip", "install", \
-     "--no-cache-dir", "--no-compile", \
-     "--target=/deps", \
-     "-r", "requirements.txt"]
-
-# Stage 2: minimal runtime — no pip artifacts, no build cache
 FROM dhi.io/python:3.12@sha256:35924be4174348d4a0bdcf3bfaba81079cbb1faa52821611c71a6f50b3006572
 
 ARG VERSION=dev
@@ -21,15 +8,17 @@ LABEL org.opencontainers.image.description="Scryfall MCP server for EDH/Commande
       org.opencontainers.image.version="${VERSION}"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/deps \
-    PATH="/deps/bin:$PATH"
+    PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-COPY --from=builder /deps /deps
+# Install as UID 0 — DHI defaults to nonroot (uid 65532) which can't write to system site-packages.
+USER 0
+COPY requirements.txt .
+RUN ["python3", "-m", "pip", "install", "--no-cache-dir", "--no-compile", "-r", "requirements.txt"]
 COPY scryfall_mcp.py .
 
+# Drop to the hardened image's built-in nonroot user for runtime.
 USER nonroot
 
 # Default: stdio transport (for Claude Desktop / Claude Code)

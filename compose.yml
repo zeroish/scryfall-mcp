@@ -40,14 +40,17 @@ services:
           memory: 256M
           cpus: "0.50"
 
-  # Dev mode: runs FastMCP Inspector (requires Node.js, so uses a separate image).
-  # Source is mounted — edit scryfall_mcp.py and the inspector reloads without rebuild.
+  # Dev mode: same production image with source mounted for quick iteration.
+  # Runs SSE transport so you can test via any HTTP MCP client.
+  # Edit scryfall_mcp.py, then restart: docker compose restart dev
   dev:
     build:
       context: .
-      dockerfile: Dockerfile.dev
-    image: scryfall-mcp-dev:latest
+      args:
+        VERSION: "${APP_VERSION:-dev}"
+    image: "scryfall-mcp:${APP_VERSION:-dev}"
+    command: ["python3", "scryfall_mcp.py", "--sse"]
     volumes:
       - ./scryfall_mcp.py:/app/scryfall_mcp.py:ro
     ports:
-      - "${INSPECTOR_PORT:-6274}:${INSPECTOR_CONTAINER_PORT:-6274}"
+      - "${DEV_PORT:-8000}:8000"

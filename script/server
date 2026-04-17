@@ -1,18 +1,16 @@
 #!/bin/bash
 # script/server
 #
-# Start the development server with the FastMCP inspector (hot-reload).
-# Builds the dev image (which includes Node.js for the inspector UI)
-# and the production image, then launches the inspector.
-# Inspector UI: http://localhost:6274
+# Start the development server in SSE mode with source mounted.
+# Same image you ship — edit scryfall_mcp.py, then restart:
+#   docker compose restart dev
+#
+# Connect any MCP client to http://localhost:8000
 
 set -e
 cd "$(dirname "$0")/.."
 
 script/update
 
-echo "==> Building dev image..."
-docker compose build dev
-
-echo "==> Starting dev server (FastMCP inspector at http://localhost:${INSPECTOR_PORT:-6274})..."
+echo "==> Starting dev server (SSE mode at http://localhost:${DEV_PORT:-8000})..."
 docker compose up dev
