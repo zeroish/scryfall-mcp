@@ -6,6 +6,39 @@ services:
         VERSION: "${APP_VERSION:-dev}"
     image: "scryfall-mcp:${APP_VERSION:-dev}"
     restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.50"
+
+  # SSE/HTTP mode — for dorks.rocks or any remote MCP client.
+  # NOTE: In-process LRU cache and rate-limiter are not shared across replicas.
+  #       Keep replicas=1 unless/until those are externalized to Redis.
+  sse:
+    build:
+      context: .
+      args:
+        VERSION: "${APP_VERSION:-dev}"
+    image: "scryfall-mcp:${APP_VERSION:-dev}"
+    command: ["python3", "scryfall_mcp.py", "--sse"]
+    ports:
+      - "${SSE_PORT:-8000}:8000"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.50"
 
   # Dev mode: runs fastmcp inspector with source mounted (no rebuild needed on changes).
   # NOTE: the volume mount is required — without it the baked image source runs instead.

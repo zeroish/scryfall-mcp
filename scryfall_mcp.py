@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 import logging
 import os
@@ -9,6 +10,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 from fastmcp import FastMCP
+from pydantic import BaseModel
 
 # Config — override via environment for test doubles or staging mirrors
 SCRYFALL_BASE_URL = os.environ.get("SCRYFALL_BASE_URL", "https://api.scryfall.com")
@@ -28,6 +30,104 @@ _client: httpx.AsyncClient | None = None
 _last_request_time: float = 0.0
 _RATE_LIMIT_DELAY = 0.1  # 100ms between requests per Scryfall guidelines
 
+# ---------------------------------------------------------------------------
+# Validation constants
+# ---------------------------------------------------------------------------
+
+_VALID_COLORS = frozenset("WUBRG")
+_KNOWN_FORMATS = frozenset({
+    "alchemy", "brawl", "commander", "duel", "explorer", "future",
+    "gladiator", "historic", "legacy", "modern", "oathbreaker", "oldschool",
+    "pauper", "paupercommander", "penny", "pioneer", "predh", "premodern",
+    "standard", "standardbrawl", "timeless", "vintage",
+})
+_VALID_RARITIES = frozenset({"common", "uncommon", "rare", "mythic"})
+_SET_CODE_RE = re.compile(r"^[a-z0-9]{2,6}$", re.IGNORECASE)
+
+# ---------------------------------------------------------------------------
+# LRU cache (insertion-ordered dict, 256-entry cap)
+# ---------------------------------------------------------------------------
+
+_cache: dict[str, dict] = {}
+_CACHE_MAX = 256
+
+
+def _cache_get(key: str) -> dict | None:
+    return _cache.get(key)
+
+
+def _cache_set(key: str, value: dict) -> None:
+    if key in _cache:
+        return
+    if len(_cache) >= _CACHE_MAX:
+        _cache.pop(next(iter(_cache)))
+    _cache[key] = value
+
+
+# ---------------------------------------------------------------------------
+# Pydantic response models
+# ---------------------------------------------------------------------------
+
+class CardResult(BaseModel):
+    id: str
+    name: str
+    mana_cost: str
+    type_line: str
+    oracle_text: str
+    colors: list[str]
+    color_identity: list[str]
+    legalities: dict[str, str]
+    prices: dict[str, str | None]
+    scryfall_uri: str
+    set: str
+    set_name: str
+    rarity: str
+    quantity: int | None = None  # populated by parse_decklist
+
+
+class RulingResult(BaseModel):
+    source: str
+    published_at: str
+    comment: str
+
+
+class PriceResult(BaseModel):
+    name: str
+    set: str
+    set_name: str
+    collector_number: str
+    prices: dict[str, str | None]
+    scryfall_uri: str
+
+
+class LegalityResult(BaseModel):
+    name: str
+    format: str
+    status: str
+    summary: str
+    legalities: dict[str, str]
+    scryfall_uri: str
+
+
+class ComboResult(BaseModel):
+    id: str
+    uses: list[str]
+    produces: list[str]
+    prerequisites: str
+    steps: str
+    spellbook_uri: str
+
+
+class DecklistResult(BaseModel):
+    found: list[CardResult]
+    not_found: list[str]
+    total_cards: int
+    unique_cards: int
+
+
+# ---------------------------------------------------------------------------
+# Lifespan + server
+# ---------------------------------------------------------------------------
 
 @asynccontextmanager
 async def lifespan(server):
@@ -55,8 +155,15 @@ def get_client() -> httpx.AsyncClient:
     return _client
 
 
-async def scryfall_get(path: str, **params) -> dict:
+async def scryfall_get(path: str, *, cacheable: bool = False, **params) -> dict:
     global _last_request_time
+
+    if cacheable:
+        key = f"{path}:{tuple(sorted(params.items()))}"
+        hit = _cache_get(key)
+        if hit is not None:
+            logger.info("CACHE HIT %s params=%s", path, params)
+            return hit
 
     elapsed = time.monotonic() - _last_request_time
     if elapsed < _RATE_LIMIT_DELAY:
@@ -82,7 +189,10 @@ async def scryfall_get(path: str, **params) -> dict:
             raise RuntimeError("Rate limited by Scryfall — please wait a moment and retry.") from None
         raise RuntimeError(f"Scryfall API error {status}: {detail}") from None
 
-    return response.json()
+    data = response.json()
+    if cacheable:
+        _cache_set(key, data)
+    return data
 
 
 async def scryfall_post(path: str, body: dict) -> dict:
@@ -113,8 +223,8 @@ async def scryfall_post(path: str, body: dict) -> dict:
     return response.json()
 
 
-def _format_card(card: dict) -> dict:
-    """Flatten a Scryfall card object to a clean, consistent dict."""
+def _format_card(card: dict) -> CardResult:
+    """Flatten a Scryfall card object to a clean CardResult."""
     faces = card.get("card_faces")
     if faces:
         oracle_text = " // ".join(f.get("oracle_text", "") for f in faces)
@@ -123,21 +233,21 @@ def _format_card(card: dict) -> dict:
         oracle_text = card.get("oracle_text", "")
         mana_cost = card.get("mana_cost", "")
 
-    return {
-        "id": card.get("id", ""),
-        "name": card.get("name", ""),
-        "mana_cost": mana_cost,
-        "type_line": card.get("type_line", ""),
-        "oracle_text": oracle_text,
-        "colors": card.get("colors", []),
-        "color_identity": card.get("color_identity", []),
-        "legalities": card.get("legalities", {}),
-        "prices": card.get("prices", {}),
-        "scryfall_uri": card.get("scryfall_uri", ""),
-        "set": card.get("set", ""),
-        "set_name": card.get("set_name", ""),
-        "rarity": card.get("rarity", ""),
-    }
+    return CardResult(
+        id=card.get("id", ""),
+        name=card.get("name", ""),
+        mana_cost=mana_cost,
+        type_line=card.get("type_line", ""),
+        oracle_text=oracle_text,
+        colors=card.get("colors", []),
+        color_identity=card.get("color_identity", []),
+        legalities=card.get("legalities", {}),
+        prices=card.get("prices", {}),
+        scryfall_uri=card.get("scryfall_uri", ""),
+        set=card.get("set", ""),
+        set_name=card.get("set_name", ""),
+        rarity=card.get("rarity", ""),
+    )
 
 
 # Matches: "4 Lightning Bolt", "4x Lightning Bolt", "1 Sol Ring (C21) 263"
@@ -163,7 +273,7 @@ def _parse_decklist_lines(raw_text: str) -> list[tuple[int, str]]:
 # ---------------------------------------------------------------------------
 
 @mcp.tool
-async def search_cards(query: str, page: int = 1) -> list[dict]:
+async def search_cards(query: str, page: int = 1) -> list[CardResult]:
     """Search for Magic cards using full Scryfall syntax.
 
     Examples: 'c:blue cmc<=2 t:instant', 'o:draw t:sorcery f:commander',
@@ -177,58 +287,58 @@ async def search_cards(query: str, page: int = 1) -> list[dict]:
 
 
 @mcp.tool
-async def get_card(name: str) -> dict:
+async def get_card(name: str) -> CardResult:
     """Get a card by name using fuzzy matching.
 
     Returns the closest match to the provided name. Prefer this over
     get_card_by_id when you have a card name but not an exact UUID.
     """
-    return _format_card(await scryfall_get("/cards/named", fuzzy=name))
+    return _format_card(await scryfall_get("/cards/named", cacheable=True, fuzzy=name))
 
 
 @mcp.tool
-async def get_card_by_id(scryfall_id: str) -> dict:
+async def get_card_by_id(scryfall_id: str) -> CardResult:
     """Get a card by its Scryfall UUID."""
-    return _format_card(await scryfall_get(f"/cards/{scryfall_id}"))
+    return _format_card(await scryfall_get(f"/cards/{scryfall_id}", cacheable=True))
 
 
 @mcp.tool
-async def get_rulings(name: str) -> list[dict]:
+async def get_rulings(name: str) -> list[RulingResult]:
     """Get official rulings for a card by name.
 
     Returns a list of rulings with source and published_at fields.
     """
-    card = await scryfall_get("/cards/named", fuzzy=name)
+    card = await scryfall_get("/cards/named", cacheable=True, fuzzy=name)
     data = await scryfall_get(f"/cards/{card['id']}/rulings")
     return [
-        {
-            "source": r.get("source", ""),
-            "published_at": r.get("published_at", ""),
-            "comment": r.get("comment", ""),
-        }
+        RulingResult(
+            source=r.get("source", ""),
+            published_at=r.get("published_at", ""),
+            comment=r.get("comment", ""),
+        )
         for r in data.get("data", [])
     ]
 
 
 @mcp.tool
-async def get_prices(name: str) -> dict:
+async def get_prices(name: str) -> PriceResult:
     """Get current market prices for a card by name.
 
     Returns USD, USD foil, EUR, and MTGO tix prices where available.
     """
-    card = await scryfall_get("/cards/named", fuzzy=name)
-    return {
-        "name": card.get("name", ""),
-        "set": card.get("set", ""),
-        "set_name": card.get("set_name", ""),
-        "collector_number": card.get("collector_number", ""),
-        "prices": card.get("prices", {}),
-        "scryfall_uri": card.get("scryfall_uri", ""),
-    }
+    card = await scryfall_get("/cards/named", cacheable=True, fuzzy=name)
+    return PriceResult(
+        name=card.get("name", ""),
+        set=card.get("set", ""),
+        set_name=card.get("set_name", ""),
+        collector_number=card.get("collector_number", ""),
+        prices=card.get("prices", {}),
+        scryfall_uri=card.get("scryfall_uri", ""),
+    )
 
 
 @mcp.tool
-async def random_card(query: str = "") -> dict:
+async def random_card(query: str = "") -> CardResult:
     """Get a random Magic card, optionally filtered by a Scryfall query.
 
     Examples: query='t:dragon f:commander', query='c:green cmc=3'
@@ -246,18 +356,22 @@ async def commander_search(
     colors: list[str],
     theme: str = "",
     card_types: str = "",
-) -> list[dict]:
+) -> list[CardResult]:
     """Find commanders matching a color identity, optional theme, and optional type.
 
     Args:
         colors: Color identity as a list of single letters, e.g. ["W","U","B"].
-                Use [] for colorless.
+                Valid values: W, U, B, R, G. Use [] for colorless.
         theme: Optional Scryfall keyword theme, e.g. "draw", "tokens", "sacrifice".
         card_types: Optional creature type filter, e.g. "elf", "dragon", "wizard".
 
     Builds a Scryfall query like `id<=WUB is:commander k:draw t:elf` automatically.
     Returns up to 175 matching commanders sorted by EDHREC rank.
     """
+    invalid = [c for c in colors if c.upper() not in _VALID_COLORS]
+    if invalid:
+        raise ValueError(f"Invalid color(s): {invalid!r}. Use W, U, B, R, G.")
+
     color_str = "".join(c.upper() for c in colors) if colors else "C"
     parts = [f"id<={color_str}", "is:commander"]
     if theme:
@@ -274,7 +388,7 @@ async def commander_search(
 
 
 @mcp.tool
-async def check_legality(card_name: str, format: str = "commander") -> dict:
+async def check_legality(card_name: str, format: str = "commander") -> LegalityResult:
     """Check whether a card is legal in a given format.
 
     Args:
@@ -285,9 +399,15 @@ async def check_legality(card_name: str, format: str = "commander") -> dict:
     Returns legality status ('legal', 'banned', 'restricted', 'not_legal')
     plus the full legalities table for reference.
     """
-    card = await scryfall_get("/cards/named", fuzzy=card_name)
+    fmt = format.lower()
+    if fmt not in _KNOWN_FORMATS:
+        raise ValueError(
+            f"Unknown format '{format}'. Known formats: {sorted(_KNOWN_FORMATS)}"
+        )
+
+    card = await scryfall_get("/cards/named", cacheable=True, fuzzy=card_name)
     legalities = card.get("legalities", {})
-    status = legalities.get(format.lower(), "unknown")
+    status = legalities.get(fmt, "unknown")
 
     _status_labels = {
         "legal": "Legal",
@@ -297,18 +417,18 @@ async def check_legality(card_name: str, format: str = "commander") -> dict:
         "unknown": f"Unknown format '{format}'",
     }
 
-    return {
-        "name": card.get("name", ""),
-        "format": format.lower(),
-        "status": status,
-        "summary": _status_labels.get(status, status),
-        "legalities": legalities,
-        "scryfall_uri": card.get("scryfall_uri", ""),
-    }
+    return LegalityResult(
+        name=card.get("name", ""),
+        format=fmt,
+        status=status,
+        summary=_status_labels.get(status, status),
+        legalities=legalities,
+        scryfall_uri=card.get("scryfall_uri", ""),
+    )
 
 
 @mcp.tool
-async def parse_decklist(raw_text: str) -> dict:
+async def parse_decklist(raw_text: str) -> DecklistResult:
     """Parse a pasted decklist and fetch full card data for each entry.
 
     Accepts standard decklist formats:
@@ -321,17 +441,14 @@ async def parse_decklist(raw_text: str) -> dict:
     """
     entries = _parse_decklist_lines(raw_text)
     if not entries:
-        return {"found": [], "not_found": [], "parse_errors": []}
+        return DecklistResult(found=[], not_found=[], total_cards=0, unique_cards=0)
 
-    # Deduplicate names for fetching; preserve quantities separately
     name_to_qty: dict[str, int] = {}
     for qty, name in entries:
         name_to_qty[name] = name_to_qty.get(name, 0) + qty
 
     unique_names = list(name_to_qty.keys())
-
-    # Batch into groups of 75 (Scryfall's collection limit)
-    found_cards: list[dict] = []
+    found_cards: list[CardResult] = []
     not_found: list[str] = []
 
     for i in range(0, len(unique_names), 75):
@@ -341,21 +458,21 @@ async def parse_decklist(raw_text: str) -> dict:
         for card in data.get("data", []):
             name = card.get("name", "")
             formatted = _format_card(card)
-            formatted["quantity"] = name_to_qty.get(name, 1)
+            formatted.quantity = name_to_qty.get(name, 1)
             found_cards.append(formatted)
         for nf in data.get("not_found", []):
             not_found.append(nf.get("name", str(nf)))
 
-    return {
-        "found": found_cards,
-        "not_found": not_found,
-        "total_cards": sum(name_to_qty.values()),
-        "unique_cards": len(unique_names),
-    }
+    return DecklistResult(
+        found=found_cards,
+        not_found=not_found,
+        total_cards=sum(name_to_qty.values()),
+        unique_cards=len(unique_names),
+    )
 
 
 @mcp.tool
-async def find_combos(card_names: list[str]) -> list[dict]:
+async def find_combos(card_names: list[str]) -> list[ComboResult]:
     """Find combos from Commander Spellbook that exist within a given card pool.
 
     Input a list of card names from your deck. Returns any known combos
@@ -365,7 +482,6 @@ async def find_combos(card_names: list[str]) -> list[dict]:
         return []
 
     client = get_client()
-    # Commander Spellbook /variants/ accepts card:"Name" syntax
     q = " ".join(f'card:"{name}"' for name in card_names)
     url = f"{COMMANDERSPELLBOOK_URL}/variants/"
     logger.info("GET variants cards=%d", len(card_names))
@@ -383,19 +499,19 @@ async def find_combos(card_names: list[str]) -> list[dict]:
     for combo in data.get("results", []):
         uses = [u.get("card", {}).get("name", "") for u in combo.get("uses", [])]
         produces = [p.get("feature", {}).get("name", "") for p in combo.get("produces", [])]
-        combos.append({
-            "id": combo.get("id", ""),
-            "uses": uses,
-            "produces": produces,
-            "prerequisites": combo.get("easyPrerequisites", "") or combo.get("notablePrerequisites", ""),
-            "steps": combo.get("description", ""),
-            "spellbook_uri": f"https://commanderspellbook.com/combo/{combo.get('id', '')}",
-        })
+        combos.append(ComboResult(
+            id=combo.get("id", ""),
+            uses=uses,
+            produces=produces,
+            prerequisites=combo.get("easyPrerequisites", "") or combo.get("notablePrerequisites", ""),
+            steps=combo.get("description", ""),
+            spellbook_uri=f"https://commanderspellbook.com/combo/{combo.get('id', '')}",
+        ))
     return combos
 
 
 @mcp.tool
-async def get_set_cards(set_code: str, rarity: str = "") -> list[dict]:
+async def get_set_cards(set_code: str, rarity: str = "") -> list[CardResult]:
     """Get all cards in a set, optionally filtered by rarity.
 
     Args:
@@ -406,12 +522,21 @@ async def get_set_cards(set_code: str, rarity: str = "") -> list[dict]:
     Useful for cube curation, pauper/peasant pool building, and set review.
     Fetches all pages automatically.
     """
+    if not _SET_CODE_RE.match(set_code):
+        raise ValueError(
+            f"Invalid set code '{set_code}'. Expected 2–6 alphanumeric characters."
+        )
+    if rarity and rarity.lower() not in _VALID_RARITIES:
+        raise ValueError(
+            f"Invalid rarity '{rarity}'. Use: common, uncommon, rare, mythic."
+        )
+
     parts = [f"e:{set_code.lower()}"]
     if rarity:
         parts.append(f"r:{rarity.lower()}")
     query = " ".join(parts)
 
-    cards: list[dict] = []
+    cards: list[CardResult] = []
     page = 1
     while True:
         try:
@@ -427,5 +552,18 @@ async def get_set_cards(set_code: str, rarity: str = "") -> list[dict]:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Scryfall MCP server")
+    parser.add_argument(
+        "--sse",
+        action="store_true",
+        help="Run SSE/HTTP transport instead of stdio (for remote/dorks.rocks use)",
+    )
+    parser.add_argument("--host", default="0.0.0.0", help="Host for SSE mode (default: 0.0.0.0)")
+    parser.add_argument("--port", type=int, default=8000, help="Port for SSE mode (default: 8000)")
+    args = parser.parse_args()
+
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-    mcp.run()
+    if args.sse:
+        mcp.run(transport="sse", host=args.host, port=args.port)
+    else:
+        mcp.run()
