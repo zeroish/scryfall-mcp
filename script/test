@@ -1,0 +1,22 @@
+#!/bin/bash
+# script/test
+#
+# Run the MCP smoke test suite inside Docker.
+# Accepts an optional test filter argument (passed to smoke.py as a name prefix).
+#
+# Usage:
+#   script/test              # run all tests
+#   script/test get_card     # run only tests whose name starts with get_card
+
+set -e
+cd "$(dirname "$0")/.."
+
+script/bootstrap
+
+FILTER="${1:-}"
+
+echo "==> Running smoke tests..."
+docker run --rm -i \
+  -v "$(pwd)/tests/smoke.py:/smoke.py:ro" \
+  "scryfall-mcp:${APP_VERSION:-dev}" \
+  python3 /smoke.py $FILTER

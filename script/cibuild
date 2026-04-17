@@ -1,0 +1,12 @@
+#!/bin/bash
+# script/cibuild
+#
+# Prepare and run the full test suite for CI.
+# Assumes Docker is available on the CI runner.
+
+set -e
+cd "$(dirname "$0")/.."
+
+echo "==> CI build starting..."
+script/test
+echo "==> CI build complete."

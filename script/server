@@ -1,0 +1,14 @@
+#!/bin/bash
+# script/server
+#
+# Start the development server with the FastMCP inspector (hot-reload).
+# Calls update first to ensure the image is current.
+# Inspector UI: http://localhost:6274
+
+set -e
+cd "$(dirname "$0")/.."
+
+script/update
+
+echo "==> Starting dev server (FastMCP inspector at http://localhost:${INSPECTOR_PORT:-6274})..."
+docker compose up dev

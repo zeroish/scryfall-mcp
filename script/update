@@ -1,0 +1,12 @@
+#!/bin/bash
+# script/update
+#
+# Update the project after pulling new changes.
+# Rebuilds the Docker image to pick up dependency or source changes.
+
+set -e
+cd "$(dirname "$0")/.."
+
+echo "==> Updating scryfall-mcp..."
+script/bootstrap
+echo "==> Update complete."

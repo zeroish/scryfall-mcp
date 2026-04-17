@@ -1,0 +1,31 @@
+#!/bin/bash
+# script/release
+#
+# Tag a release and push it to GitHub, triggering the release workflow
+# which builds and publishes ghcr.io/zeroish/scryfall-mcp:<version>.
+#
+# Usage:
+#   script/release v1.2.3
+
+set -e
+cd "$(dirname "$0")/.."
+
+VERSION="${1:?Usage: script/release <version>  (e.g. v1.2.3)}"
+
+# Validate version format
+if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "Error: version must be in vMAJOR.MINOR.PATCH format (got: $VERSION)" >&2
+  exit 1
+fi
+
+# Ensure working tree is clean
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  echo "Error: uncommitted changes — commit or stash before releasing." >&2
+  exit 1
+fi
+
+echo "==> Releasing $VERSION..."
+git tag "$VERSION"
+git push origin "$VERSION"
+echo "==> Tagged and pushed $VERSION. Watch the release workflow:"
+echo "    https://github.com/zeroish/scryfall-mcp/actions"

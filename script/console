@@ -1,0 +1,22 @@
+#!/bin/bash
+# script/console
+#
+# Open an interactive Python console inside the application container.
+# Useful for ad-hoc debugging, exploring the Scryfall API, or inspecting
+# installed packages.
+#
+# Usage:
+#   script/console           # local container
+#   SCRYFALL_BASE_URL=... script/console   # with env overrides
+
+set -e
+cd "$(dirname "$0")/.."
+
+script/update
+
+echo "==> Opening Python console (Ctrl-D to exit)..."
+docker run --rm -it \
+  -e "SCRYFALL_BASE_URL=${SCRYFALL_BASE_URL:-}" \
+  -e "COMMANDERSPELLBOOK_URL=${COMMANDERSPELLBOOK_URL:-}" \
+  "scryfall-mcp:${APP_VERSION:-dev}" \
+  python3

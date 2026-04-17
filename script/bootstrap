@@ -1,0 +1,24 @@
+#!/bin/bash
+# script/bootstrap
+#
+# Resolve all dependencies the application requires to run.
+# Safe to run multiple times (idempotent).
+
+set -e
+cd "$(dirname "$0")/.."
+
+echo "==> Checking Docker..."
+if ! command -v docker &>/dev/null; then
+  echo "Error: Docker is not installed or not in PATH." >&2
+  exit 1
+fi
+if ! docker info &>/dev/null; then
+  echo "Error: Docker daemon is not running." >&2
+  exit 1
+fi
+echo "    Docker OK ($(docker version --format '{{.Server.Version}}'))"
+
+echo "==> Building Docker image..."
+docker compose build scryfall-mcp
+
+echo "==> Bootstrap complete."

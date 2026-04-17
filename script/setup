@@ -1,0 +1,12 @@
+#!/bin/bash
+# script/setup
+#
+# Set up the project for the first time after cloning.
+# Calls bootstrap to build the image; no database or other state to initialize.
+
+set -e
+cd "$(dirname "$0")/.."
+
+echo "==> Setting up scryfall-mcp..."
+script/bootstrap
+echo "==> Setup complete. Run 'make server' to start the dev inspector."
